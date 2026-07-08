@@ -1,0 +1,7 @@
+# Deterministic line endings for the cross-platform launchers and scripts.
+# Shell scripts MUST stay LF — a CRLF shebang (`#!/bin/bash\r`) breaks on macOS/Linux.
+*.command  text eol=lf
+*.sh       text eol=lf
+*.mjs      text eol=lf
+# Windows batch prefers CRLF.
+*.bat      text eol=crlf
