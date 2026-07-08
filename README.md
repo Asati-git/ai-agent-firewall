@@ -11,6 +11,39 @@ A **local-first security gateway for autonomous AI coding agents.** Cerberus sit
 risk-scores it across four signals, and either **allows, audits, asks for human approval, or blocks**
 it — all on your machine, with **no external API and nothing leaving the box.**
 
+## Setup & usage
+Not on npm yet — install from source (Node ≥ 20):
+
+```bash
+git clone https://github.com/Asati-git/ai-agent-firewall.git
+cd ai-agent-firewall
+npm install                    # installs deps incl. tsx — no build step needed to run the gateway
+
+# 1. Wire the hook into your agent (Claude Code by default; --agent codex|cursor|cline, --global):
+node bin/cerberus.mjs init
+
+# 2. Start the gateway (keep it running in its own terminal):
+node bin/cerberus.mjs engine   # http://127.0.0.1:9000/
+
+# 3. Use your agent as usual — tool calls now route through Cerberus.
+```
+
+That's the whole setup. A **risky** call (e.g. `rm -rf`, reading `~/.ssh`, a leaked `.env`, an odd
+network egress) now surfaces your agent's **native approve/deny prompt** with Cerberus's reason; safe
+calls pass silently.
+
+- **Shorter command?** Run `npm link` once, then call `cerberus init` / `cerberus engine` instead of `node bin/cerberus.mjs …`.
+- **Forensic dashboard UI** at `http://127.0.0.1:9000/`? Build it once: `npm --prefix dashboard install && npm run build` (the gateway works without it).
+- **Remove it later?** Edit your agent's config (e.g. `.claude/settings.json`); `init` backs it up first.
+
+Optional defense beyond the tool boundary — run any of these any time:
+```bash
+node bin/cerberus.mjs scan           # scan MCP tools for poisoning / rug-pulls
+node bin/cerberus.mjs deps           # audit lockfiles for known-bad / vulnerable packages
+node bin/cerberus.mjs proxy --mitm   # network egress gate: redact secrets from the outbound LLM prompt
+node bin/cerberus.mjs feeds refresh  # refresh the offline malicious-domain feed
+```
+
 ## The problem
 Autonomous coding agents run shell commands, edit files, and make network calls on your behalf — at
 machine speed, often unattended. One bad step (`rm -rf`, an unwanted `git push`, a leaked `.env`, a
@@ -51,7 +84,7 @@ prohibitions can never override.
 ## Quickstart
 
 ```bash
-npm i -g @cerberussec/core      # or run ad-hoc with: npx @cerberussec/core <cmd>
+# install from source (see "Setup & usage" above — npm publish pending), then, e.g. after `npm link`:
 
 # wire Cerberus into your agent (merges into the agent's config — backed up, idempotent):
 cerberus init                 # Claude Code, project-level   (--agent codex|cursor|cline, --global, --print)
