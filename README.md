@@ -12,42 +12,107 @@ risk-scores it across four signals, and either **allows, audits, asks for human 
 it — all on your machine, with **no external API and nothing leaving the box.**
 
 ## Setup & usage
-Not on npm yet — install from source (Node ≥ 20):
+Cerberus isn't on npm yet — you install it **from source**. It runs on **Windows, macOS, and Linux**
+(the Cline adapter is macOS/Linux only; Claude Code / Codex / Cursor work everywhere).
 
+**Prerequisites:** [Node.js **≥ 20**](https://nodejs.org) (check with `node -v`), plus `git` and `npm`
+(bundled with Node). No account, API key, or network service — everything runs locally on `127.0.0.1`.
+
+### 1 · Clone & install
 ```bash
 git clone https://github.com/Asati-git/ai-agent-firewall.git
 cd ai-agent-firewall
 
-npm install                    # ⚠️ REQUIRED first — installs dependencies (don't skip this)
+npm install          # ⚠️ REQUIRED — nothing runs until this finishes
+```
+> **This is the step people skip.** Any `node bin/cerberus.mjs …` command run *before* `npm install`
+> stops with *"dependencies are missing"* (older builds: `Cannot find package 'tsx'`). The fix is always
+> the same — run `npm install` in the project folder first.
 
-# 1. Wire the hook into your agent (Claude Code by default; --agent codex|cursor|cline, --global):
-node bin/cerberus.mjs init
-
-# 2. Start the gateway (keep it running in its own terminal):
-node bin/cerberus.mjs engine   # http://127.0.0.1:9000/
-
-# 3. Use your agent as usual — tool calls now route through Cerberus.
+Confirm the install with a command that writes nothing and holds no port:
+```bash
+node bin/cerberus.mjs rules validate      # → "All rule files valid."
 ```
 
-> Running `node bin/cerberus.mjs …` **before** `npm install` fails with `Cannot find package 'tsx'` — just
-> run `npm install` in the project folder first. (Optional: `npm run build:engine` compiles `dist/` for
-> faster startup.)
+Two optional conveniences:
+```bash
+npm run build:engine     # compile to dist/ → faster startup (otherwise it runs the TS source via tsx)
+npm link                 # lets you type `cerberus …` instead of `node bin/cerberus.mjs …`
+```
+> Commands below are shown as `node bin/cerberus.mjs …` (always works). After `npm link` you can use the
+> shorter `cerberus …`. On Windows `npm link` may need an admin terminal / Developer Mode — if it complains,
+> just skip it and keep the `node bin/…` form.
 
-That's the whole setup. A **risky** call (e.g. `rm -rf`, reading `~/.ssh`, a leaked `.env`, an odd
-network egress) now surfaces your agent's **native approve/deny prompt** with Cerberus's reason; safe
-calls pass silently.
+### 2 · Wire the hook into your agent
+```bash
+node bin/cerberus.mjs init             # Claude Code, THIS project only  (writes ./.claude/settings.json)
+node bin/cerberus.mjs init --global    # …or every project on this machine (~/.claude/settings.json)
 
-- **Shorter command?** Run `npm link` once, then call `cerberus init` / `cerberus engine` instead of `node bin/cerberus.mjs …`.
-- **Forensic dashboard UI** at `http://127.0.0.1:9000/`? Build it once: `npm --prefix dashboard install && npm run build` (the gateway works without it).
-- **Remove it later?** Edit your agent's config (e.g. `.claude/settings.json`); `init` backs it up first.
+# other agents:   --agent codex | cursor | cline
+# preview the exact config without writing anything:   --print
+```
+`init` **merges** into your agent's config (never overwrites), is **idempotent**, and **backs up** the
+existing file to `<path>.bak` first. On success it prints `✅ Wired Cerberus into claude at <path>`.
+To undo later: delete the added hook block, or restore the `.bak`.
 
-Optional defense beyond the tool boundary — run any of these any time:
+### 3 · Start the gateway — and keep it running
+```bash
+node bin/cerberus.mjs engine           # binds 127.0.0.1:9000 (loopback only), stays in the foreground
+```
+Leave this terminal open: the hook talks to this process on **every** tool call. For convenience you can
+instead **double-click `start-engine.bat`** (Windows) or **`start-engine.command`** (macOS/Linux — `chmod +x`
+it once). Port 9000 already in use? `CB_ENGINE_PORT=9001 node bin/cerberus.mjs engine` (set the same var
+wherever the agent runs).
+
+### 4 · Use your agent as normal
+Tool calls now route through Cerberus. **Risky** ones (`rm -rf`, reading `~/.ssh`, a leaked `.env`, an odd
+network egress) surface your agent's **native approve/deny prompt** with Cerberus's reason; safe calls
+pass silently.
+> If the engine **isn't** running, calls are **blocked by default** (fail-closed — a firewall that fails
+> silently open is worse than none). Set `CB_FAIL_OPEN=1` to allow calls through while it's down instead.
+
+### 5 · Verify it's actually working
+```bash
+# a) engine alive?
+curl http://127.0.0.1:9000/health
+#    → {"ok":true,"pending":0}
+
+# b) the "brain" decides correctly — these only ASK for a verdict; NOTHING is executed:
+curl -s -X POST http://127.0.0.1:9000/intercept -H "content-type: application/json" \
+  -d '{"tool":"Read","input":{"file_path":"README.md"}}'      #  → "action":"ALLOW"
+curl -s -X POST http://127.0.0.1:9000/intercept -H "content-type: application/json" \
+  -d '{"tool":"Bash","input":{"command":"rm -rf /"}}'         #  → "action":"BLOCK"
+```
+- **Hook wired?** `init` printed `✅ Wired…`, or your `.claude/settings.json` contains a hook whose command includes `cerberus.mjs`.
+- **End-to-end:** with the engine running, ask your agent to do something risky → you'll see the approval prompt (or a block).
+
+### Optional · forensic dashboard UI
+The gateway enforces fine without it, but for the session timeline / risk-replay UI at
+`http://127.0.0.1:9000/`, build the dashboard once (it's a **separate** npm project, so it needs its own
+install):
+```bash
+npm --prefix dashboard install && npm run build
+```
+Restart the engine afterwards. Until it's built, `http://127.0.0.1:9000/` returns `{"error":"not found"}`
+(the API and enforcement still work).
+
+### Optional · defense beyond the tool boundary
 ```bash
 node bin/cerberus.mjs scan           # scan MCP tools for poisoning / rug-pulls
 node bin/cerberus.mjs deps           # audit lockfiles for known-bad / vulnerable packages
 node bin/cerberus.mjs proxy --mitm   # network egress gate: redact secrets from the outbound LLM prompt
 node bin/cerberus.mjs feeds refresh  # refresh the offline malicious-domain feed
 ```
+
+### Troubleshooting
+| Symptom | Cause → fix |
+|---|---|
+| `Cannot find package 'tsx'` / *"dependencies are missing"* | `npm install` was skipped → run it in the project folder |
+| Every tool call blocked: *"engine unreachable … Failing closed"* | engine not running → start `node bin/cerberus.mjs engine` (or `CB_FAIL_OPEN=1` to allow while it's down) |
+| `http://127.0.0.1:9000/` shows `{"error":"not found"}` | dashboard not built → `npm --prefix dashboard install && npm run build`, then restart the engine |
+| `EADDRINUSE` on startup | port 9000 in use → `CB_ENGINE_PORT=9001 …` (set the same var for the agent) |
+| Codex / Cline never prompt for held calls | no native prompt → run engine with `CB_APPROVAL_SURFACE=dashboard`, approve via `cerberus pending` |
+| `proxy --mitm`: *"requires node-forge"* | optional dep skipped → `npm i node-forge` |
 
 ## The problem
 Autonomous coding agents run shell commands, edit files, and make network calls on your behalf — at
