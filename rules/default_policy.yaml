@@ -1,0 +1,287 @@
+# Cerberus — default policy (V1).
+#
+# This is DATA, not code. Edit it freely; no rebuild required.
+# Rules are evaluated top-to-bottom and the FIRST match wins.
+# Each rule's `when` is a json-logic expression evaluated against a fact:
+#   { tool, category, command, path, url }
+# A custom `matches` op runs a regex: { matches: ["<regex>", { var: command }] }
+# Actions: ALLOW | BLOCK | HITL
+#
+# `default` applies when no rule matches. We fail toward human review (HITL),
+# never toward silent ALLOW.
+default: HITL
+
+rules:
+  # ───────────────────────── BLOCK: destructive / secret access ─────────────────────────
+  - id: block-rm-rf
+    description: "Recursive force delete (rm -rf, in any flag order/spelling/case) is blocked outright."
+    action: BLOCK
+    when:
+      # (?i) + independent lookaheads for a recursive flag AND a force flag ⇒ also catches
+      # `rm -r -f`, `rm --recursive --force`, `rm -fr`, `rm -RF`.
+      matches: ["(?i)\\brm\\b(?=.*(?:-[a-z]*r[a-z]*\\b|--recursive\\b))(?=.*(?:-[a-z]*f[a-z]*\\b|--force\\b))", { var: command }]
+
+  - id: block-destructive-file-ops
+    description: "Mass/irrecoverable destroyers (find -delete / -exec rm, shred, dd of=, mkfs, truncate -s0) are blocked."
+    action: BLOCK
+    when:
+      matches: ["(?i)\\bfind\\b[^|;&]*-delete\\b|\\bfind\\b[^|;&]*-exec\\s+rm\\b|\\bshred\\b|\\bdd\\b[^|;&]*\\bof=|\\bmkfs\\b|\\btruncate\\b[^|;&]*-s\\s*0\\b", { var: command }]
+
+  - id: block-fork-bomb
+    description: "Shell fork-bomb pattern is blocked."
+    action: BLOCK
+    when:
+      matches: [":\\(\\)\\s*\\{\\s*:\\s*\\|\\s*:", { var: command }]
+
+  - id: block-known-malicious-package
+    description: "Installing a KNOWN-compromised package/version (supply-chain IOC: litellm 1.82.7/1.82.8, grokwrapper, xz 5.6.0/5.6.1) is blocked. Extend this list for your org."
+    action: BLOCK
+    when:
+      matches: ["(?i)\\b(pip[0-9.]*|pip3|uv|npm|pnpm|yarn|bun|poetry|gem|cargo)\\s+(install|add|i)\\b[^|;&]*\\bgrokwrapper\\b|\\blitellm\\b\\s*(==|@)\\s*1\\.82\\.[78]\\b|\\bxz(-?utils)?\\b[^|;&]*\\b5\\.6\\.[01]\\b", { var: command }]
+
+  - id: block-known-malicious-endpoint
+    description: "Referencing/connecting to a known-malicious LLM proxy or C2 endpoint (IOC from documented campaigns) is blocked."
+    action: BLOCK
+    when:
+      or:
+        - matches: ["(?i)\\b(awstore\\.cloud|api\\.kiro\\.cheap|eth-fastscan\\.org|jsonkeeper\\.com|recargapopular\\.com|welovechinatown\\.info)\\b|\\b(39\\.107\\.60\\.51|2\\.27\\.43\\.246|89\\.124\\.93\\.110)\\b", { var: command }]
+        - matches: ["(?i)\\b(awstore\\.cloud|api\\.kiro\\.cheap|eth-fastscan\\.org|jsonkeeper\\.com|recargapopular\\.com|welovechinatown\\.info)\\b|\\b(39\\.107\\.60\\.51|2\\.27\\.43\\.246|89\\.124\\.93\\.110)\\b", { var: url }]
+
+  - id: block-defense-evasion
+    description: "Anti-forensics / defense-evasion (clearing event logs or shell history, disabling ScriptBlock/AMSI/Defender, deleting shadow copies or the USN journal) is blocked — never legitimate for a coding agent (malware IOC)."
+    action: BLOCK
+    when:
+      matches: ["(?i)\\bwevtutil(\\.exe)?\\s+(cl|clear-log)\\b|\\bClear-EventLog\\b|\\bClear-History\\b|\\bauditpol\\b[^|;&]*/clear|\\bvssadmin\\b[^|;&]*delete\\s+shadows|\\b(wmic|Get-WmiObject|gwmi)\\b[^|;&]*shadowcopy[^|;&]*delete|\\bfsutil\\b[^|;&]*usn\\s+deletejournal|EnableScriptBlockLogging\\b[^|;&]*(-Value\\s*0|[/-]d\\s+0|\\b0\\b)|\\bAmsiUtils\\b|\\bamsiInitFailed\\b|\\bSet-MpPreference\\b[^|;&]*-Disable|\\bAdd-MpPreference\\b[^|;&]*ExclusionPath", { var: command }]
+
+  - id: block-pipe-to-shell
+    description: "Piping a remote download or a decoded blob straight into a shell is blocked."
+    action: BLOCK
+    when:
+      # curl/wget | sh  and  base64 -d | sh  /  xxd -r | sh  /  openssl enc -d | sh
+      matches: ["(?i)(curl|wget|fetch)\\b[^|]*\\|\\s*(sudo\\s+)?(ba|z|k|c|da)?sh\\b|(base64\\s+(-d|--decode)|xxd\\s+-r|openssl\\s+enc\\b[^|]*-d)\\b[^|]*\\|\\s*(sudo\\s+)?(ba|z)?sh\\b", { var: command }]
+
+  - id: block-ps-destructive-delete
+    description: "Recursive/forced delete on Windows (Remove-Item -Recurse/-Force, rd /s, del /q) is blocked."
+    action: BLOCK
+    when:
+      matches: ["\\b(Remove-Item|ri|rmdir|rd)\\b[^|;]*-(Recurse|Force)\\b|\\b(rd|rmdir)\\b[^|;]*\\s/s\\b|\\b(del|erase)\\b[^|;]*\\s/[sq]\\b", { var: command }]
+
+  - id: block-ps-iex-download
+    description: "Executing a remote download via Invoke-Expression (iex) is blocked."
+    action: BLOCK
+    when:
+      matches: ["(Invoke-WebRequest|iwr|Invoke-RestMethod|irm|DownloadString)\\b[^|;]*\\|\\s*(Invoke-Expression|iex)\\b|\\b(Invoke-Expression|iex)\\b[^|;]*\\(\\s*(Invoke-WebRequest|iwr|Invoke-RestMethod|irm|New-Object\\s+Net\\.WebClient)", { var: command }]
+
+  - id: block-env-read-path
+    description: "Reading a .env file is blocked (secret exfiltration risk)."
+    action: BLOCK
+    when:
+      matches: ["(^|/)\\.env(\\.[^/]*)?$", { var: path }]
+
+  - id: block-env-read-cmd
+    description: "Reading OR copying/laundering a .env file via the shell is blocked (any reader/copier verb)."
+    action: BLOCK
+    when:
+      # Broadened well beyond cat/less: awk/sed/grep/perl/python/vi/dd read it; cp/mv/scp/rsync/tar/base64
+      # launder it (copy-then-read). Matches the .env token anywhere after any of these verbs.
+      matches: ["(?i)\\b(cat|less|more|head|tail|tac|nl|xxd|od|strings|hexdump|base64|cut|awk|gawk|sed|grep|egrep|fgrep|rg|ag|perl|python[0-9.]*|ruby|node|php|vi|vim|nano|emacs|dd|cp|mv|scp|sftp|rsync|tar|zip|gzip|xxd|xargs|Get-Content|gc|type|Import-Csv)\\b[^&|;]*(^|[\\s/='\"])\\.env(\\.[a-z0-9_]+)?\\b", { var: command }]
+
+  # ───────────────────────── HITL: state changers ─────────────────────────
+  - id: hitl-interpreter-inline-exec
+    description: "Running inline code via an interpreter (python -c, node -e, perl/ruby -e, sh -c, powershell -enc) requires approval."
+    action: HITL
+    when:
+      matches: ["(?i)\\b(python[0-9.]*|perl|ruby|node|php)\\b\\s+-e\\b|\\bpython[0-9.]*\\b\\s+-c\\b|\\b(ba|z)?sh\\b\\s+-c\\b|\\bpowershell(\\.exe)?\\b[^|;&]*\\s-e(nc(odedcommand)?)?\\b|\\bpwsh\\b[^|;&]*\\s-e", { var: command }]
+
+  - id: hitl-unsafe-model-load
+    description: "Loading an ML model/pickle unsafely (torch.load without weights_only, trust_remote_code=True, pickle/dill/joblib.load, yaml.load without SafeLoader) can execute code from the artifact — requires approval."
+    action: HITL
+    when:
+      matches: ["(?i)\\btorch\\.load\\s*\\((?![^)]*weights_only\\s*=\\s*true)|\\btrust_remote_code\\s*=\\s*true|\\b(pickle|cloudpickle|dill|_pickle)\\.load\\b|\\bjoblib\\.load\\b|\\byaml\\.load\\s*\\((?![^)]*safeloader)", { var: command }]
+
+  - id: hitl-persistence
+    description: "Establishing persistence (scheduled task, autorun registry Run key, new service, startup folder, cron) requires approval — a common malware foothold."
+    action: HITL
+    when:
+      matches: ["(?i)\\bschtasks\\b[^|;&]*/create|\\b(Register|New)-ScheduledTask\\b|[/\\\\]CurrentVersion[/\\\\](Run|RunOnce)\\b|\\bNew-Service\\b|\\bsc(\\.exe)?\\s+create\\b|[/\\\\]Start Menu[/\\\\]Programs[/\\\\]Startup[/\\\\]|(^|[\\s/\\\\'\"=])crontab\\b|[/\\\\](cron\\.d|systemd[/\\\\]system)[/\\\\]", { var: command }]
+
+  - id: hitl-proxy-hijack
+    description: "Redirecting network traffic (system/LLM proxy, base-URL override, route change, tun2socks) requires approval — the MitM hijack vector."
+    action: HITL
+    when:
+      matches: ["(?i)\\bnetsh\\b[^|;&]*\\bproxy\\b|\\bProxyServer\\b|\\btun2socks\\b|\\broute\\s+(add|change|-p|delete)\\b|\\b(ANTHROPIC|OPENAI|OPENROUTER|GEMINI|HTTPS?|ALL)_?(BASE_URL|PROXY|API_BASE)\\b|\\bhttps?_proxy\\b|\\bSet-ItemProperty\\b[^|;&]*Internet Settings", { var: command }]
+
+  - id: hitl-lolbin-download
+    description: "Downloading or executing remote content via a LOLBin (certutil, bitsadmin, mshta, regsvr32/rundll32 URL, Invoke-WebRequest -OutFile, Start-BitsTransfer) requires approval."
+    action: HITL
+    when:
+      matches: ["(?i)\\bcertutil(\\.exe)?\\b[^|;&]*(-urlcache|-split|http)|\\bbitsadmin\\b[^|;&]*/transfer|\\bStart-BitsTransfer\\b|\\bmshta(\\.exe)?\\b[^|;&]*https?://|\\bregsvr32\\b[^|;&]*(/i:|scrobj)|\\brundll32\\b[^|;&]*https?://|\\b(Invoke-WebRequest|iwr|Invoke-RestMethod|irm)\\b[^|;&]*(-OutFile|-Uri\\b[^|;&]*-OutFile)", { var: command }]
+
+  - id: hitl-git-push
+    description: "git push to a remote requires human approval."
+    action: HITL
+    when:
+      matches: ["\\bgit\\s+push\\b", { var: command }]
+
+  - id: hitl-publish
+    description: "Publishing a package requires human approval."
+    action: HITL
+    when:
+      matches: ["\\b(npm|yarn|pnpm)\\s+publish\\b", { var: command }]
+
+  - id: hitl-sudo
+    description: "Privilege escalation (sudo) requires human approval."
+    action: HITL
+    when:
+      matches: ["(^|\\s)sudo\\s", { var: command }]
+
+  - id: hitl-chmod-permissive
+    description: "Making a file world-writable/executable (chmod 777, icacls grant Everyone) requires approval."
+    action: HITL
+    when:
+      matches: ["\\bchmod\\s+(-[a-zA-Z]+\\s+)*(0?777|a\\+rwx)\\b|\\bicacls\\b[^|;&]*/grant[^|;&]*(Everyone|Users)", { var: command }]
+
+  - id: hitl-kill-process
+    description: "Force-killing processes (kill -9, killall, taskkill /f, Stop-Process -Force) requires approval."
+    action: HITL
+    when:
+      matches: ["\\b(kill\\s+-(9|KILL)|killall|pkill)\\b|\\btaskkill\\b[^|;&]*/f|\\bStop-Process\\b[^|;&]*-Force", { var: command }]
+
+  # ── Sensitive-path protection (data-at-rest). Edit these patterns to fit your environment. ──
+  # The "sensitive path token" below is shared (kept identical) between the path rule and the command
+  # rule: key dirs (ssh/aws/gnupg/kube/docker/azure), cloud-CLI creds (gcloud/gh/rclone/…), db/cred files
+  # (.pgpass, rclone.conf, credentials.db, ADC json, browser Login Data/Cookies/logins.json, key4.db),
+  # private keys (id_*, *.pem/.key/.p12/.pfx/…), /etc/{passwd,shadow,sudoers,ssl/private},
+  # /proc/<pid>/{environ,cmdline,mem,maps,kcore} (RAM/env leak), /dev/{mem,kmem,kcore}, k8s SA tokens
+  # (/var/run/secrets/…), and shell *_history files. Keep in sync with src/signals/content.ts (M7).
+  # Absolute obfuscated paths (globs `/et?/shadow`, `/etc/pass[w]d`) are ALSO caught by the read-only
+  # allow rules' risky-path guard below; de-quote/de-slash/de-expand in the engine handle relative ones.
+  - id: hitl-sensitive-path
+    description: "Reading a sensitive path (keys, cloud/db creds, browser stores, /etc, /proc mem, k8s tokens, shell history) requires approval."
+    action: HITL
+    when:
+      matches: ["(?i)(^|[\\s/\\\\'\"=])\\.(ssh|aws|gnupg|kube|docker|azure)([/\\\\]|$)|(^|[\\s/\\\\'\"=])\\.config[/\\\\](gcloud|gh|rclone|openai|anthropic|Code|JetBrains|hub)[/\\\\]|(^|[\\s/\\\\'\"=])(\\.pgpass|pgpass\\.conf|rclone\\.conf|\\.dockercfg|\\.npmrc|\\.pypirc|\\.netrc|\\.git-credentials|\\.terraformrc|credentials\\.tfrc\\.json|credentials\\.db|application_default_credentials\\.json|access_tokens\\.db|logins\\.json|key[34]\\.db|cookies\\.sqlite|WinSCP\\.ini)(\\b|$)|[/\\\\](Login Data|Local State|Cookies)\\b|(^|[\\s/\\\\'\"=])id_(rsa|dsa|ecdsa|ed25519)\\b|\\.(pem|key|p12|pfx|pkcs12|keystore|jks|ppk)\\b|[/\\\\]etc[/\\\\](passwd|shadow|sudoers|gshadow)\\b|[/\\\\]etc[/\\\\]ssl[/\\\\]private[/\\\\]|[/\\\\]proc[/\\\\]([^/\\\\]+[/\\\\])?(environ|cmdline|mem|maps|stack|auxv|kcore)\\b|[/\\\\]dev[/\\\\](mem|kmem|kcore|port)\\b|[/\\\\](var[/\\\\])?run[/\\\\]secrets[/\\\\]|(^|[\\s/\\\\'\"=])\\.[a-z]*_history\\b|(^|[\\s/\\\\'\"=])secrets?\\.(ya?ml|json|txt)\\b|\\bHK(CU|LM|CR|U|CC|EY_[A-Z_]+)\\b[^|;&]*\\b(PuTTY|WinSCP|Sessions|Passwords?|Credentials?|SAM|SECURITY|VNC)\\b|(^|[\\s/\\\\'\"=])(wallet\\.dat|\\.wallet|mnemonic|seed[_-]?phrase|UTC--[0-9])|[/\\\\](keystore|wallets?)[/\\\\]|\\.(tfstate|tfvars|gpg|pgp|asc|kdbx|kdb|ovpn|p8)\\b|(^|[\\s/\\\\'\"=])\\.password-store([/\\\\]|$)|(service[_-]?account|gcp[_-]?key)[^\\s/\\\\]*\\.json\\b|(^|[\\s/\\\\'\"=])credentials?\\.(json|ya?ml|xml|ini|toml|properties)\\b", { var: path }]
+
+  - id: hitl-sensitive-path-cmd
+    description: "Any shell command that references a sensitive path (verb-independent — defeats find -exec, awk, copy-laundering) requires approval."
+    action: HITL
+    when:
+      matches: ["(?i)(^|[\\s/\\\\'\"=])\\.(ssh|aws|gnupg|kube|docker|azure)([/\\\\]|$)|(^|[\\s/\\\\'\"=])\\.config[/\\\\](gcloud|gh|rclone|openai|anthropic|Code|JetBrains|hub)[/\\\\]|(^|[\\s/\\\\'\"=])(\\.pgpass|pgpass\\.conf|rclone\\.conf|\\.dockercfg|\\.npmrc|\\.pypirc|\\.netrc|\\.git-credentials|\\.terraformrc|credentials\\.tfrc\\.json|credentials\\.db|application_default_credentials\\.json|access_tokens\\.db|logins\\.json|key[34]\\.db|cookies\\.sqlite|WinSCP\\.ini)(\\b|$)|[/\\\\](Login Data|Local State|Cookies)\\b|(^|[\\s/\\\\'\"=])id_(rsa|dsa|ecdsa|ed25519)\\b|\\.(pem|key|p12|pfx|pkcs12|keystore|jks|ppk)\\b|[/\\\\]etc[/\\\\](passwd|shadow|sudoers|gshadow)\\b|[/\\\\]etc[/\\\\]ssl[/\\\\]private[/\\\\]|[/\\\\]proc[/\\\\]([^/\\\\]+[/\\\\])?(environ|cmdline|mem|maps|stack|auxv|kcore)\\b|[/\\\\]dev[/\\\\](mem|kmem|kcore|port)\\b|[/\\\\](var[/\\\\])?run[/\\\\]secrets[/\\\\]|(^|[\\s/\\\\'\"=])\\.[a-z]*_history\\b|(^|[\\s/\\\\'\"=])secrets?\\.(ya?ml|json|txt)\\b|\\bHK(CU|LM|CR|U|CC|EY_[A-Z_]+)\\b[^|;&]*\\b(PuTTY|WinSCP|Sessions|Passwords?|Credentials?|SAM|SECURITY|VNC)\\b|(^|[\\s/\\\\'\"=])(wallet\\.dat|\\.wallet|mnemonic|seed[_-]?phrase|UTC--[0-9])|[/\\\\](keystore|wallets?)[/\\\\]|\\.(tfstate|tfvars|gpg|pgp|asc|kdbx|kdb|ovpn|p8)\\b|(^|[\\s/\\\\'\"=])\\.password-store([/\\\\]|$)|(service[_-]?account|gcp[_-]?key)[^\\s/\\\\]*\\.json\\b|(^|[\\s/\\\\'\"=])credentials?\\.(json|ya?ml|xml|ini|toml|properties)\\b", { var: command }]
+
+  - id: hitl-find-exec
+    description: "find … action primaries run a command or WRITE a file per match (-exec/-execdir/-ok, -fprint/-fprintf/-fls) — requires approval."
+    action: HITL
+    when:
+      matches: ["(?i)\\bfind\\b[^|;&]*\\s-(exec(dir)?|ok(dir)?|fprintf?|fls)\\b", { var: command }]
+
+  - id: hitl-dev-tcp-egress
+    description: "Reading/writing /dev/tcp or /dev/udp opens a raw network socket (a covert exfil/ingress channel) — requires approval."
+    action: HITL
+    when:
+      matches: ["(?i)[/\\\\]dev[/\\\\](tcp|udp)[/\\\\]", { var: command }]
+
+  - id: hitl-pkg-install-from-url
+    description: "Installing a package from a URL / git repo runs its build/postinstall scripts (arbitrary RCE) — requires approval."
+    action: HITL
+    when:
+      matches: ["(?i)\\b(npm|pnpm|yarn|bun)\\s+(install|add|i|dlx)\\b[^|;&]*(https?://|git[+@]|github:|file:)|\\b(npx|bunx)\\b[^|;&]*(https?://|git[+@])|\\b(pip[0-9.]*|pip3|uv)\\s+install\\b[^|;&]*(https?://|git\\+)|\\b(gem\\s+install|cargo\\s+install|go\\s+(install|get))\\b[^|;&]*(https?://|git)", { var: command }]
+
+  - id: hitl-egress-upload
+    description: "An outbound call that UPLOADS data (curl/wget POST/PUT/form/file) — even to a trusted host — requires approval."
+    action: HITL
+    when:
+      matches: ["(?i)\\b(curl|wget)\\b[^|;&]*(--data(-binary|-raw|-urlencode)?\\b|--post-data|--post-file|\\s-d\\b|\\s-F\\b|--form\\b|\\s-T\\b|--upload-file|-X\\s*(POST|PUT|PATCH))", { var: command }]
+
+  - id: hitl-git-remote-mutate
+    description: "Adding or repointing a git remote (git remote add/set-url) can wire an exfil channel — requires approval."
+    action: HITL
+    when:
+      matches: ["(?i)\\bgit\\s+remote\\s+(add|set-url|rename)\\b", { var: command }]
+
+  - id: hitl-git-clone-remote
+    description: "Cloning a repo / fetching a submodule pulls attacker-controllable content onto the host (--recurse-submodules fetches arbitrary hosts) — requires approval."
+    action: HITL
+    when:
+      matches: ["(?i)\\bgit\\s+clone\\b|\\bgit\\s+submodule\\s+(add|update)\\b", { var: command }]
+
+  - id: hitl-egress-secret-in-url
+    description: "An outbound call that interpolates a credential env-var or command-substitution (a secret smuggled in the URL/query, even a GET to a trusted host) requires approval."
+    action: HITL
+    when:
+      matches: ["(?i)\\b(curl|wget|fetch|Invoke-(WebRequest|RestMethod)|iwr|irm)\\b[^|;&]*(\\$\\{?[A-Za-z_]*(SECRET|TOKEN|API[_-]?KEY|APIKEY|PASSWORD|PASSWD|CREDENTIAL|PRIVATE|SESSION)|\\$\\(|`)", { var: command }]
+
+  - id: hitl-download-executable
+    description: "Downloading a script/executable/archive to disk (curl/wget) — a staged payload — requires approval."
+    action: HITL
+    when:
+      matches: ["(?i)\\b(curl|wget)\\b[^|;&]*(-o|-O|--output(-document)?)\\b[^|;&]*\\.(sh|bash|zsh|ps1|psm1|bat|cmd|exe|msi|scr|dll|py|rb|pl|php|jar|tgz|tar|zip|gz|7z|deb|rpm|dmg|pkg|apk)\\b|\\b(curl|wget)\\b[^|;&]*https?://[^\\s'\"]*\\.(sh|bash|ps1|bat|cmd|exe|msi|scr|py|rb|pl|jar)\\b", { var: command }]
+
+  - id: hitl-write-category
+    description: "Writing or editing a file requires human approval."
+    action: HITL
+    when:
+      "==": [{ var: category }, "WRITE"]
+
+  # ── Egress destination policy (evaluated before the generic egress catch-all). ──
+  - id: hitl-egress-suspicious
+    description: "Outbound call to a known data-sink / unverified host (paste site, webhook catcher, raw IP) — review."
+    action: HITL
+    when:
+      matches: ["https?://(\\d{1,3}\\.){3}\\d{1,3}([:/]|$)|https?://([^/]*\\.)?(pastebin\\.com|hastebin|ghostbin|webhook\\.site|requestbin|pipedream\\.net|beeceptor|ngrok\\.io|transfer\\.sh|0x0\\.st|file\\.io|termbin\\.com)", { var: url }]
+
+  - id: allow-egress-trusted
+    description: "Outbound calls to well-known developer hosts (registries, GitHub, OpenAI/Anthropic APIs) are auto-approved (a loaded secret still gates egress via the content signal)."
+    action: ALLOW
+    when:
+      matches: ["^https?://([^/]*\\.)?(github\\.com|githubusercontent\\.com|api\\.openai\\.com|api\\.anthropic\\.com|registry\\.npmjs\\.org|npmjs\\.com|pypi\\.org|files\\.pythonhosted\\.org|crates\\.io|sum\\.golang\\.org|proxy\\.golang\\.org|gitlab\\.com|bitbucket\\.org)([:/]|$)", { var: url }]
+
+  - id: hitl-egress-category
+    description: "Other outbound network calls require human approval."
+    action: HITL
+    when:
+      "==": [{ var: category }, "EGRESS"]
+
+  # ───────────────────────── ALLOW: read-only / safe ─────────────────────────
+  - id: allow-benign-builtins
+    description: "Claude Code internal tools with no host side effect are auto-approved."
+    action: ALLOW
+    when:
+      in:
+        - { var: tool }
+        - ["TodoWrite", "AskUserQuestion", "ExitPlanMode", "Task", "BashOutput", "SlashCommand"]
+
+  # A leading read-only verb is NOT enough on its own: `cat`/`grep`/`head` of an ABSOLUTE/home/device path
+  # (or a `$env:`-expanded one) can read any secret. So auto-ALLOW requires BOTH a read-only verb AND the
+  # absence of a "risky location" reference — otherwise the call falls through to the sensitive-path rules
+  # or `default: HITL`. Benign /dev sinks (/dev/null, /dev/stdout…) are excluded so `2>/dev/null` still allows.
+  - id: allow-readonly-commands
+    description: "Read-only shell commands are auto-approved — unless they reference a risky absolute/home/device path (then reviewed)."
+    action: ALLOW
+    when:
+      and:
+        - matches:
+            - "^\\s*(cd|ls|pwd|echo|true|:|cat|grep|rg|find|head|tail|wc|which|whoami|date|env|printenv|tree|stat|file|git\\s+(status|log|diff|branch|show|remote|rev-parse)|node\\s+-v|npm\\s+(test|ls|run\\s+test)|cargo\\s+check)\\b"
+            - { var: command }
+        - "!":
+            matches:
+              - "(?i)((^|[\\s=<>|])(~[/\\\\]|[A-Za-z]:[\\\\/]|\\$env:|/(?!dev/(null|zero|full|random|urandom|stdin|stdout|stderr|tty|console|ptmx)\\b)[^\\s])|\\$\\(|`|(&?>>?|>\\|)\\s*(?!&)(?!/dev/(null|zero|full|random|urandom|stdin|stdout|stderr|tty|console|ptmx)\\b)[^\\s&|;<>])"
+              - { var: command }
+
+  - id: allow-readonly-powershell
+    description: "Read-only PowerShell cmdlets are auto-approved — unless they reference a risky absolute/$env:/drive path (then reviewed)."
+    action: ALLOW
+    when:
+      and:
+        - matches:
+            - "^\\s*(Get-(ChildItem|Content|Location|Item|ItemProperty|Command|Help|Member|Process|Service|Date|Variable|Acl|History)|Select-(Object|String)|Where-Object|Sort-Object|Measure-Object|Group-Object|Compare-Object|Format-(Table|List|Wide)|Out-(String|Host|GridView)|Write-(Output|Host)|Test-Path|Resolve-Path|Split-Path|Join-Path|ConvertTo-(Json|Csv)|gci|gc|gi|gl|gm|gcm|gps|sls|dir|type|cls)\\b"
+            - { var: command }
+        - "!":
+            matches:
+              - "(?i)((^|[\\s=<>|])(~[/\\\\]|[A-Za-z]:[\\\\/]|\\$env:|/(?!dev/(null|zero|full|random|urandom|stdin|stdout|stderr|tty|console|ptmx)\\b)[^\\s])|\\$\\(|`|(&?>>?|>\\|)\\s*(?!&)(?!/dev/(null|zero|full|random|urandom|stdin|stdout|stderr|tty|console|ptmx)\\b)[^\\s&|;<>])"
+              - { var: command }
+
+  - id: allow-read-category
+    description: "Read-only tools (Read/Grep/Glob) are auto-approved."
+    action: ALLOW
+    when:
+      "==": [{ var: category }, "READ"]

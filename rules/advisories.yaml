@@ -1,0 +1,77 @@
+# Cerberus — local package-advisory seed (DATA, not code). Matched by `cerberus deps` against your
+# lockfiles, fully OFFLINE. Curated from documented supply-chain incidents; EXTEND for your org, or run
+# `cerberus deps --osv` to additionally query OSV.dev for your resolved dependency set (opt-in, online).
+#
+# Fields: id, ecosystem (npm|PyPI|crates.io|Go|* for any), name, severity (malicious|critical|high|
+# medium|low), summary. Affected versions: `versions:` (exact list) OR `range: {introduced, fixed}`
+# (introduced <= v < fixed) OR omit both = ALL versions of that name are flagged.
+
+advisories:
+  # ── AI/LLM supply-chain (studied incidents) ──
+  - id: CB-MAL-litellm
+    ecosystem: PyPI
+    name: litellm
+    versions: ["1.82.7", "1.82.8"]
+    severity: malicious
+    summary: "Backdoored release (TeamPCP, Mar 2026) — .pth RCE, cloud/AI credential harvesting, systemd persistence."
+  - id: CB-MAL-grokwrapper
+    ecosystem: PyPI
+    name: grokwrapper
+    severity: malicious
+    summary: "Fake Grok wrapper (Lazarus, Feb 2026) — DreamLoader + Clipper (RADCUI.dll)."
+  - id: CB-MAL-ai-sdk-ollama
+    ecosystem: npm
+    name: ai-sdk-ollama
+    versions: ["0.13.1", "1.1.1", "2.2.1", "3.8.5"]
+    severity: malicious
+    summary: "Miasma self-replicating worm (Jun 2026) — install-time RCE via malicious binding.gyp."
+  - id: CB-MAL-ultralytics
+    ecosystem: PyPI
+    name: ultralytics
+    versions: ["8.3.41", "8.3.42", "8.3.45", "8.3.46"]
+    severity: malicious
+    summary: "CI/CD-poisoned release (Dec 2024) — XMRig cryptominer."
+  # ── xz backdoor ──
+  - id: CB-MAL-xz
+    ecosystem: "*"
+    name: xz
+    versions: ["5.6.0", "5.6.1"]
+    severity: malicious
+    summary: "CVE-2024-3094 — sshd backdoor in the xz/liblzma build."
+  - id: CB-MAL-xz-utils
+    ecosystem: "*"
+    name: xz-utils
+    versions: ["5.6.0", "5.6.1"]
+    severity: malicious
+    summary: "CVE-2024-3094 — sshd backdoor in the xz/liblzma build."
+  # ── famous npm supply-chain compromises ──
+  - id: CB-MAL-event-stream
+    ecosystem: npm
+    name: event-stream
+    versions: ["3.3.6"]
+    severity: malicious
+    summary: "flatmap-stream dependency stole bitcoin wallet keys (2018)."
+  - id: CB-MAL-ua-parser-js
+    ecosystem: npm
+    name: ua-parser-js
+    versions: ["0.7.29", "0.8.0", "1.0.0"]
+    severity: malicious
+    summary: "Account-takeover published crypto-miner + password stealer (Oct 2021)."
+  - id: CB-MAL-node-ipc
+    ecosystem: npm
+    name: node-ipc
+    versions: ["10.1.1", "10.1.2", "9.2.2"]
+    severity: malicious
+    summary: "Protestware — overwrote files by geolocation (Mar 2022)."
+  - id: CB-MAL-coa
+    ecosystem: npm
+    name: coa
+    versions: ["2.0.3", "2.0.4", "2.1.1", "2.1.3", "3.0.1", "3.1.3"]
+    severity: malicious
+    summary: "Account-takeover credential stealer (Nov 2021)."
+  - id: CB-MAL-rc
+    ecosystem: npm
+    name: rc
+    versions: ["1.2.9", "1.3.9", "2.3.9"]
+    severity: malicious
+    summary: "Account-takeover credential stealer (Nov 2021)."

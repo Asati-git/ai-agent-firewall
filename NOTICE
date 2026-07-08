@@ -1,0 +1,28 @@
+ai-agent-firewall
+Copyright 2026 Asati-git
+
+This product is a derivative work based on Cerberus
+(https://github.com/Adirdabush1/cerberus), Copyright 2026 Adir Dabush,
+originally licensed under the Apache License, Version 2.0.
+
+Both the original work and this derivative are licensed under the
+Apache License, Version 2.0 (the "License"); you may not use these files
+except in compliance with the License. A copy of the License is provided
+in the LICENSE file. The upstream copyright notice is retained therein as
+required by Section 4(c) of the License.
+
+------------------------------------------------------------------------
+Modifications made in this fork (Section 4(b) "stated changes"):
+------------------------------------------------------------------------
+  - MCP tool-poisoning and rug-pull scanning (`cerberus scan`), with
+    tool-definition SHA-256 pinning.
+  - Egress proxy (`cerberus proxy`) with opt-in MITM: HTTPS response-body
+    scanning and redaction of structured secrets from the outbound prompt
+    to LLM providers, plus a plaintext/non-provider credential guard.
+  - Offline supply-chain dependency audit (`cerberus deps`) over lockfiles
+    with an OSV.dev advisory seed (optional online query).
+  - Refreshable offline IOC destination feed (`cerberus feeds`).
+  - Command-chaining defense: segment-aware evaluation with de-obfuscation
+    (dequote / deslash / deexpand / deansi) and a risky-path guard.
+  - Expanded default policy and substantially expanded test/simulation
+    coverage (unit suites, e2e, attack / red-team / malware simulations).

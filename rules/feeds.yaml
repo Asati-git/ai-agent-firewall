@@ -1,0 +1,19 @@
+# Cerberus — IOC feed sources for `cerberus feeds refresh` (DATA, editable).
+#
+# Each feed is downloaded once, parsed as a hostfile/domain list, and matched LOCALLY at decision time
+# (no per-request network call — the Pi-hole "gravity" model). This preserves local-first/offline: the
+# only network step is the periodic, opt-in `feeds refresh`. Point `url` at a file:// path for an
+# air-gapped mirror. Add your org's feeds or a newly-registered-domain (NRD) list here.
+#
+# severity: block  → a matched destination host is BLOCKED (known malware / C2 feeds)
+#           hitl   → escalated to human review (softer signals, e.g. newly-registered domains)
+
+feeds:
+  - name: hagezi-tif-mini
+    url: https://raw.githubusercontent.com/hagezi/dns-blocklists/main/hosts/tif.mini.txt
+    severity: block
+
+  # Domain-age signal (offline NRD list) — freshly-registered domains → review. Large; enable if wanted:
+  # - name: nrd-14day
+  #   url: https://raw.githubusercontent.com/xRuffKez/NRD/main/lists/14-day/domains-only/nrd-14day.txt
+  #   severity: hitl

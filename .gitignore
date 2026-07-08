@@ -1,0 +1,14 @@
+node_modules/
+dist/
+.env
+.env.*
+*.log
+.DS_Store
+.cerberus/
+*.tgz
+
+# TLS / MITM material and local state (defense-in-depth; never commit)
+ca.crt
+ca.key
+*.pem
+tool_pins.json

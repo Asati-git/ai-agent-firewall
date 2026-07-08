@@ -1,0 +1,99 @@
+{
+  "name": "@cerberussec/core",
+  "version": "0.1.0",
+  "description": "Cerberus — a local-first security gateway for autonomous AI coding agents. Intercept, risk-score, and human-approve every tool call. Terminal-first, with a forensic dashboard.",
+  "type": "module",
+  "license": "Apache-2.0",
+  "publishConfig": {
+    "access": "public"
+  },
+  "author": "Asati-git",
+  "homepage": "https://github.com/Asati-git/ai-agent-firewall#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Asati-git/ai-agent-firewall.git"
+  },
+  "bugs": {
+    "url": "https://github.com/Asati-git/ai-agent-firewall/issues"
+  },
+  "keywords": [
+    "ai",
+    "agent",
+    "security",
+    "guardrail",
+    "claude-code",
+    "llm",
+    "waf",
+    "prompt-injection",
+    "human-in-the-loop",
+    "mcp"
+  ],
+  "bin": {
+    "cerberus": "bin/cerberus.mjs"
+  },
+  "files": [
+    "dist",
+    "dashboard/dist",
+    "rules",
+    "examples",
+    "bin",
+    "THIRD_PARTY_NOTICES.md"
+  ],
+  "scripts": {
+    "engine": "tsx src/cli/index.ts engine",
+    "hook": "tsx src/cli/index.ts hook",
+    "typecheck": "tsc --noEmit",
+    "build": "npm run build:engine && npm run build:dashboard",
+    "build:engine": "tsc",
+    "build:dashboard": "npm --prefix dashboard run build",
+    "prepack": "npm run build",
+    "prepublishOnly": "npm run build",
+    "test:behavioral": "tsx scripts/behavioral.test.ts",
+    "e2e:behavioral": "node scripts/behavioral-e2e.mjs",
+    "test:content": "tsx scripts/content.test.ts",
+    "e2e:content": "node scripts/content-e2e.mjs",
+    "test:injection": "tsx scripts/injection.test.ts",
+    "e2e:injection": "node scripts/injection-e2e.mjs",
+    "test:bypass": "tsx scripts/bypass.test.ts",
+    "test:hook": "tsx scripts/hook.test.ts",
+    "test:store": "tsx scripts/store.test.ts",
+    "test:mcp-scan": "tsx scripts/mcp-scan.test.ts",
+    "test:proxy": "tsx scripts/proxy.test.ts",
+    "test:mitm": "tsx scripts/mitm.test.ts",
+    "test:deps": "tsx scripts/deps.test.ts",
+    "test:ioc": "tsx scripts/ioc.test.ts",
+    "e2e:ioc": "node scripts/ioc-e2e.mjs",
+    "e2e:attack": "node scripts/attack-sim.mjs",
+    "e2e:redteam": "node scripts/redteam-run.mjs",
+    "e2e:malware": "node scripts/malware-sim.mjs",
+    "test:risk": "tsx scripts/risk.test.ts",
+    "e2e:risk": "node scripts/risk-e2e.mjs",
+    "test:init": "tsx scripts/init.test.ts",
+    "test:projector": "tsx scripts/projector.test.ts",
+    "test:audit": "tsx scripts/audit.test.ts",
+    "test:notify": "tsx scripts/notify.test.ts",
+    "test:security": "tsx scripts/security.test.ts",
+    "test:policy": "tsx scripts/policy.test.ts",
+    "test:adapters": "tsx scripts/adapters.test.ts",
+    "test:validate": "tsx scripts/validate.test.ts"
+  },
+  "dependencies": {
+    "js-yaml": "^4.1.0",
+    "json-logic-js": "^2.0.5",
+    "ws": "^8.18.0"
+  },
+  "optionalDependencies": {
+    "node-forge": "^1.4.0"
+  },
+  "devDependencies": {
+    "@types/js-yaml": "^4.0.9",
+    "@types/node": "^22.10.2",
+    "@types/node-forge": "^1.3.14",
+    "@types/ws": "^8.5.13",
+    "tsx": "^4.19.2",
+    "typescript": "^5.7.2"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}
