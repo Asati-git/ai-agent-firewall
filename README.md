@@ -83,6 +83,17 @@ curl -s -X POST http://127.0.0.1:9000/intercept -H "content-type: application/js
 curl -s -X POST http://127.0.0.1:9000/intercept -H "content-type: application/json" \
   -d '{"tool":"Bash","input":{"command":"rm -rf /"}}'         #  → "action":"BLOCK"
 ```
+> **On Windows PowerShell**, `curl` is an alias for `Invoke-WebRequest` and won't accept `-s/-X/-H/-d`.
+> Use `Invoke-RestMethod` instead (it also parses the JSON reply for you):
+> ```powershell
+> Invoke-RestMethod http://127.0.0.1:9000/health
+> Invoke-RestMethod -Uri http://127.0.0.1:9000/intercept -Method Post -ContentType 'application/json' `
+>   -Body '{"tool":"Read","input":{"file_path":"README.md"}}'        #  → action : ALLOW
+> Invoke-RestMethod -Uri http://127.0.0.1:9000/intercept -Method Post -ContentType 'application/json' `
+>   -Body '{"tool":"Bash","input":{"command":"rm -rf /"}}'           #  → action : BLOCK
+> ```
+> (Or call the real curl explicitly as `curl.exe …`.)
+
 - **Hook wired?** `init` printed `✅ Wired…`, or your `.claude/settings.json` contains a hook whose command includes `cerberus.mjs`.
 - **End-to-end:** with the engine running, ask your agent to do something risky → you'll see the approval prompt (or a block).
 
