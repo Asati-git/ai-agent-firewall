@@ -33,7 +33,7 @@ jobs:
 
       - name: Unit tests
         run: |
-          for t in behavioral content injection risk init projector audit notify security policy adapters validate bypass hook store mcp-scan proxy mitm deps ioc; do
+          for t in behavioral content injection risk init projector audit notify security policy adapters validate bypass fp hook store mcp-scan proxy mitm deps ioc; do
             echo "── test:$t ──"
             npx tsx "scripts/$t.test.ts"
           done

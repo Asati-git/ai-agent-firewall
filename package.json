@@ -55,6 +55,7 @@
     "test:injection": "tsx scripts/injection.test.ts",
     "e2e:injection": "node scripts/injection-e2e.mjs",
     "test:bypass": "tsx scripts/bypass.test.ts",
+    "test:fp": "tsx scripts/fp.test.ts",
     "test:hook": "tsx scripts/hook.test.ts",
     "test:store": "tsx scripts/store.test.ts",
     "test:mcp-scan": "tsx scripts/mcp-scan.test.ts",

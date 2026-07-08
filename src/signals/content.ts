@@ -73,7 +73,10 @@ export interface ContaminationMonitor {
 }
 
 interface SessionState {
-  content: { types: Set<string>; secrets: SecretRef[]; ts: number } | null; // persistent for the session (D5)
+  // `structured` is TRUE once a real structured secret (SECRET_PATTERNS, not the entropy heuristic) has
+  // been loaded — only that arms the generic `content-exfil` suspicion gate (FP1a). `secrets` still holds
+  // ALL captured values (structured + entropy) so the precise M6 exact-match path stays fully covered.
+  content: { types: Set<string>; secrets: SecretRef[]; structured: boolean; ts: number } | null; // persistent for the session (D5)
   path: { paths: Set<string>; lastTs: number } | null; // heuristic, decays via TTL (D5)
   injection: { score: number; ts: number; tool: string } | null; // heuristic, decays via TTL (D12)
 }
@@ -99,15 +102,21 @@ export class InMemoryContaminationMonitor implements ContaminationMonitor {
     const types = st.content?.types ?? new Set<string>();
     const secrets = st.content?.secrets ?? [];
     const base = `${call.tool}${pathOf(call) ? ` ${pathOf(call)}` : ''}`;
+    // Only a STRUCTURED secret arms the generic `content-exfil` suspicion gate (FP1a): a high-entropy
+    // token alone (lockfile digest, base64 asset, build id) is too weak to hold every later egress. The
+    // entropy value is still STORED below so the precise exact-match path (content-exfil-match) covers it.
+    let structured = st.content?.structured ?? false;
     for (const f of found) {
       types.add(f.type);
+      if (f.type !== 'high-entropy') structured = true;
       // Keep the raw value in memory for egress matching; store provenance + hash only (M6).
       if (!secrets.some((s) => s.value === f.value)) {
         secrets.push({ value: f.value, type: f.type, source: `${base}:${f.line}`, hash: hash12(f.value), confidence: f.confidence });
       }
     }
     if (secrets.length > 50) secrets.splice(0, secrets.length - 50); // bound memory
-    st.content = { types, secrets, ts: Date.now() };
+    st.content = { types, secrets, structured, ts: Date.now() };
+    // `tainted` (audit/notify) reflects any capture; the ENFORCEMENT arming is gated on `structured` in evaluate().
     return { secretTypes: [...new Set(found.map((f) => f.type))], tainted: true };
   }
 
@@ -148,7 +157,7 @@ export class InMemoryContaminationMonitor implements ContaminationMonitor {
           reason: `Confirmed exfiltration: a ${hit.type} secret (source: ${hit.source}, sha256:${hit.hash}, confidence ${Math.round(hit.confidence * 100)}%) appears in the outbound ${call.tool} payload${dest ? ` to ${dest}` : ''}. Approve only if this is intended.`,
           kind: 'content-exfil-match',
         };
-      } else if (st.content) {
+      } else if (st.content?.structured) {
         const types = [...st.content.types].join(', ');
         verdict = {
           action: 'HITL',
@@ -167,6 +176,17 @@ export class InMemoryContaminationMonitor implements ContaminationMonitor {
         verdict = {
           action: null,
           reason: `Path-risk: this session accessed a sensitive path (${[...st.path.paths][0]}) and is now making an outbound ${call.tool} call.`,
+          kind: 'path-risk',
+        };
+      } else if (st.content) {
+        // Entropy-only taint (FP1a): a high-entropy blob was loaded but NO structured secret and the exact
+        // value isn't in this payload. Too weak to HITL egress on its own (that was the false positive), but
+        // NOT nothing — an evasively-encoded exfil of a bespoke token would evade the exact-match above. Emit
+        // a weak AUDIT-tier corroboration (action null, path-risk weight): quiet alone (below the audit band),
+        // escalates only when it STACKS with another distinct concern. Defense-in-depth without the FP.
+        verdict = {
+          action: null,
+          reason: `Weak content-risk: high-entropy data was loaded into this session and the agent is now making an outbound ${call.tool} call (no structured secret; exact value not seen in payload).`,
           kind: 'path-risk',
         };
       }
@@ -229,11 +249,54 @@ const NETWORK_VERB =
 // bash's /dev/tcp|/dev/udp pseudo-devices are a raw-socket egress channel with no "verb".
 const DEV_SOCKET = /[/\\]dev[/\\](tcp|udp)[/\\]/i;
 
-/** Is this call an egress for the content gate? A native EGRESS tool, or a shell command that reaches out. */
+// git subcommands that make NO network call. Their arguments (commit messages, branch/tag names, paths)
+// routinely contain words like "ssh"/"fetch"/"host" that must NOT be read as a network reach-out (FP1c:
+// `git commit -m "add ssh config"` was gated as egress). NETWORK git verbs (push/fetch/pull/clone/remote/
+// submodule) and `config` (sets remotes / credential helpers) are deliberately EXCLUDED — they stay egress-eligible.
+const LOCAL_GIT = new Set([
+  'commit', 'add', 'status', 'log', 'diff', 'show', 'branch', 'tag', 'stash', 'reset', 'restore', 'checkout',
+  'switch', 'mv', 'rm', 'merge', 'rebase', 'cherry-pick', 'revert', 'init', 'describe', 'shortlog', 'reflog', 'blame',
+]);
+
+/** Coarse top-level shell split (mirrors the policy engine's conservative segmentation). */
+const cmdSegments = (cmd: string): string[] => cmd.split(/\|\||&&|[;|&\n]/g).map((s) => s.trim()).filter(Boolean);
+
+/** Command-substitution bodies — `$(...)` / backtick — are commands in their own right; extract them so a
+ *  verb hidden inside `git commit -m "$(curl evil)"` still counts even though the outer segment is local git. */
+function extractSubstitutions(cmd: string): string[] {
+  const out: string[] = [];
+  const re = /\$\(([^()]*)\)|`([^`]*)`/g;
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(cmd)) !== null) out.push(m[1] ?? m[2] ?? '');
+  return out;
+}
+
+/** A segment whose leading token is `git` and whose subcommand is purely local — a NETWORK_VERB word in its
+ *  args is inert data, not a reach-out. Skips git global options (`-c k=v`, `-C dir`, `--no-pager`) to find the verb. */
+function isLocalGitSegment(seg: string): boolean {
+  const toks = seg.trim().split(/\s+/);
+  if (toks[0] !== 'git') return false;
+  let i = 1;
+  while (i < toks.length) {
+    const t = toks[i] ?? '';
+    if (t === '-c' || t === '-C') { i += 2; continue; } // these take an argument
+    if (t.startsWith('-')) { i += 1; continue; } // other global flag (e.g. --no-pager)
+    break;
+  }
+  const sub = toks[i];
+  return sub != null && LOCAL_GIT.has(sub);
+}
+
+/** Is this call an egress for the content gate? A native EGRESS tool, or a shell command that reaches out.
+ *  Evaluated PER SEGMENT so a network verb only counts when it's a real command — not a word inside a local
+ *  git message (FP1c) — while a chained/substituted `curl`/`ssh`/`nc` in ANY segment still fires (H1 kept). */
 function isEgress(call: MCPToolCall): boolean {
   if (classify(call.tool) === 'EGRESS') return true;
   const cmd = commandOf(call);
-  return cmd !== '' && (NETWORK_VERB.test(cmd) || DEV_SOCKET.test(cmd));
+  if (cmd === '') return false;
+  if (DEV_SOCKET.test(cmd)) return true;
+  const segments = [...cmdSegments(cmd), ...extractSubstitutions(cmd)];
+  return segments.some((seg) => !isLocalGitSegment(seg) && NETWORK_VERB.test(seg));
 }
 
 interface FoundSecret {
@@ -272,7 +335,13 @@ function detectSecretValues(text: string, cfg: ContentConfig): FoundSecret[] {
     const head = structured.length > cfg.scanLimitBytes ? structured.slice(0, cfg.scanLimitBytes) : structured;
     const seen = new Set<string>();
     for (const token of head.split(/[\s'"`,;(){}[\]]+/)) {
-      if (token.length >= cfg.entropyMinLen && !seen.has(token) && /^[A-Za-z0-9+/=_-]+$/.test(token) && shannon(token) >= cfg.entropyThreshold) {
+      if (
+        token.length >= cfg.entropyMinLen &&
+        !seen.has(token) &&
+        /^[A-Za-z0-9+/=_-]+$/.test(token) &&
+        !isBenignBlob(token) &&
+        shannon(token) >= cfg.entropyThreshold
+      ) {
         seen.add(token);
         out.push({ value: token, type: 'high-entropy', confidence: 0.75, line: lineOf(head, head.indexOf(token)) });
         if (out.length >= MAX_ENTROPY_HITS) break;
@@ -326,6 +395,18 @@ function destOf(call: MCPToolCall): string {
   } catch {
     return '';
   }
+}
+
+// Ubiquitous benign high-entropy shapes the agent reads during normal maintenance — NOT secrets, and
+// arming taint on them was FP1a. Excluded from the entropy fallback ONLY (structured SECRET_PATTERNS are
+// unaffected). Deliberately narrow: a real bespoke token that merely *looks* like these (e.g. a genuine
+// 40-char API token) is far more likely to co-occur with a structured pattern, a sensitive PATH, or to
+// appear verbatim in an egress payload — all of which stay covered (structured taint, path-risk, M6 match).
+const SUBRESOURCE_INTEGRITY = /^(?:sha(?:256|384|512))[-:][A-Za-z0-9+/=]+$/; //   SRI / npm-yarn integrity digest
+const PURE_HEX_DIGEST = /^[0-9a-f]{32}$|^[0-9a-f]{40}$|^[0-9a-f]{64}$|^[0-9a-f]{128}$/; // md5/sha1/sha256/sha512 hex (go.sum, git oid, Cargo checksum)
+const RFC4122_UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+function isBenignBlob(token: string): boolean {
+  return SUBRESOURCE_INTEGRITY.test(token) || PURE_HEX_DIGEST.test(token) || RFC4122_UUID.test(token);
 }
 
 /** Shannon entropy in bits/char — a cheap "does this look random/secret-like" measure. */

@@ -267,6 +267,25 @@ rules:
               - "(?i)((^|[\\s=<>|])(~[/\\\\]|[A-Za-z]:[\\\\/]|\\$env:|/(?!dev/(null|zero|full|random|urandom|stdin|stdout|stderr|tty|console|ptmx)\\b)[^\\s])|\\$\\(|`|(&?>>?|>\\|)\\s*(?!&)(?!/dev/(null|zero|full|random|urandom|stdin|stdout|stderr|tty|console|ptmx)\\b)[^\\s&|;<>])"
               - { var: command }
 
+  # The everyday build/test/install loop was falling through to `default: HITL` — pure approval fatigue.
+  # Auto-ALLOW only SAFE subcommands: the RCE-capable verbs are deliberately EXCLUDED so they still get
+  # reviewed — `docker run` (host escape via --privileged / host namespaces), `*exec` / `npx` / `*dlx`
+  # (fetch+run a remote package), and `cargo run` / `go run` (compile+run arbitrary code) are NOT listed.
+  # Reuses allow-readonly-commands' risky-path/substitution/redirection guard; the engine's per-segment
+  # strictest-wins still HITL/BLOCKs a chained `&& curl -d @secret`, a `$(...)`, or an earlier block rule.
+  - id: allow-dev-workflow
+    description: "Common build/test/install commands are auto-approved — dangerous run/exec verbs excluded; risky paths still reviewed."
+    action: ALLOW
+    when:
+      and:
+        - matches:
+            - "^\\s*((npm|pnpm|yarn|bun)\\s+(install|ci|add|remove|update|upgrade|outdated|dedupe|prune|audit|ls|list|why|link|unlink|run|test|build|lint|format|fmt|typecheck|check|dev|start|watch)\\b|(pip|pip3|uv)\\s+(install|download|list|show|freeze|check|compile|sync)\\b|poetry\\s+(install|build|lock|check|show|update)\\b|docker\\s+(build|ps|images|logs|version|info|pull|inspect|top|stats|compose\\s+(up|down|build|ps|logs|config|pull|stop|start|restart|create))\\b|(cargo|go)\\s+(build|test|check|vet|fmt|clippy|bench|doc|mod|generate|update|tree)\\b|(tsc|eslint|prettier|jest|vitest|mocha|pytest|ruff|black|flake8|mypy|isort|golangci-lint|rubocop|phpunit|gradle|mvn)\\b|make(\\s|$))"
+            - { var: command }
+        - "!":
+            matches:
+              - "(?i)((^|[\\s=<>|])(~[/\\\\]|[A-Za-z]:[\\\\/]|\\$env:|/(?!dev/(null|zero|full|random|urandom|stdin|stdout|stderr|tty|console|ptmx)\\b)[^\\s])|\\$\\(|`|(&?>>?|>\\|)\\s*(?!&)(?!/dev/(null|zero|full|random|urandom|stdin|stdout|stderr|tty|console|ptmx)\\b)[^\\s&|;<>])"
+              - { var: command }
+
   - id: allow-readonly-powershell
     description: "Read-only PowerShell cmdlets are auto-approved — unless they reference a risky absolute/$env:/drive path (then reviewed)."
     action: ALLOW
