@@ -17,7 +17,8 @@ Not on npm yet — install from source (Node ≥ 20):
 ```bash
 git clone https://github.com/Asati-git/ai-agent-firewall.git
 cd ai-agent-firewall
-npm install                    # installs deps incl. tsx — no build step needed to run the gateway
+
+npm install                    # ⚠️ REQUIRED first — installs dependencies (don't skip this)
 
 # 1. Wire the hook into your agent (Claude Code by default; --agent codex|cursor|cline, --global):
 node bin/cerberus.mjs init
@@ -27,6 +28,10 @@ node bin/cerberus.mjs engine   # http://127.0.0.1:9000/
 
 # 3. Use your agent as usual — tool calls now route through Cerberus.
 ```
+
+> Running `node bin/cerberus.mjs …` **before** `npm install` fails with `Cannot find package 'tsx'` — just
+> run `npm install` in the project folder first. (Optional: `npm run build:engine` compiles `dist/` for
+> faster startup.)
 
 That's the whole setup. A **risky** call (e.g. `rm -rf`, reading `~/.ssh`, a leaked `.env`, an odd
 network egress) now surfaces your agent's **native approve/deny prompt** with Cerberus's reason; safe
